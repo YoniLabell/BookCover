@@ -1,0 +1,105 @@
+version: '3.9'
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/backend.Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ../backend/app:/app/app
+      - bookready-media:/data/bookready
+    ports:
+      - '8000:8000'
+    depends_on:
+      redis:
+        condition: service_started
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ../backend/app:/app/app
+      - bookready-media:/data/bookready
+    depends_on:
+      redis:
+        condition: service_started
+  frontend:
+    build:
+      context: ..
+      dockerfile: infra/docker/frontend.Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      - NEXT_PUBLIC_API_BASE=http://nginx
+    volumes:
+      - ../frontend:/app
+    ports:
+      - '3000:3000'
+    depends_on:
+      api:
+        condition: service_healthy
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: bookready
+      POSTGRES_PASSWORD: bookready
+      POSTGRES_DB: bookready
+    volumes:
+      - bookready-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U bookready']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  minio:
+    image: minio/minio:RELEASE.2024-03-15T03-44-19Z
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    command: server /data --console-address ":9001"
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - bookready-minio:/data
+  clamav:
+    image: clamav/clamav:latest
+    ports:
+      - '3310:3310'
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - '8080:80'
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+
+volumes:
+  bookready-media:
+  bookready-db:
+  bookready-minio:
